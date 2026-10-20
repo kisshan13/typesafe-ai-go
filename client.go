@@ -83,12 +83,12 @@ func (c *Client) Evaluate(ctx context.Context, req EvaluationRequest) (*Evaluati
 	if err := validateRequest(req); err != nil {
 		return nil, err
 	}
-	body, err := json.Marshal(req)
+	body, contentType, imagesEnabled, err := prepareEvaluationRequest(req)
 	if err != nil {
-		return nil, fmt.Errorf("typesafe: encode request: %w", err)
+		return nil, err
 	}
 	for attempt := 0; ; attempt++ {
-		result, retry, err := c.do(ctx, body)
+		result, retry, err := c.do(ctx, body, contentType, imagesEnabled)
 		if err == nil {
 			return result, nil
 		}
@@ -102,7 +102,7 @@ func (c *Client) Evaluate(ctx context.Context, req EvaluationRequest) (*Evaluati
 	}
 }
 
-func (c *Client) do(ctx context.Context, body []byte) (*EvaluationResponse, bool, error) {
+func (c *Client) do(ctx context.Context, body []byte, contentType string, imagesEnabled bool) (*EvaluationResponse, bool, error) {
 	baseURL := c.baseURL
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
@@ -112,7 +112,10 @@ func (c *Client) do(ctx context.Context, body []byte) (*EvaluationResponse, bool
 		return nil, false, fmt.Errorf("typesafe: create request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+c.apiKey)
-	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Type", contentType)
+	if imagesEnabled {
+		request.Header.Set("TypeSafe-Danger-Zone-Images", "true")
+	}
 	response, err := c.httpClient.Do(request)
 	if err != nil {
 		return nil, false, fmt.Errorf("typesafe: request: %w", err)

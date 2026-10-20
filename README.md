@@ -21,7 +21,8 @@ import "github.com/kisshan13/typesafe-ai-go"
 
 The default model is `typesafe.JevLatest` (`"jev-latest"`). You can omit
 `EvaluationRequest.Model` to use it, or set it explicitly. The default API
-base URL is `https://api.typesafe.ai`; configure another endpoint with
+base URL is `https://api.typesafe.ai`; model names use the `typesafe.Model`
+string type. Configure another endpoint with
 `typesafe.WithBaseURL("https://example.com")`. Passing an empty URL restores
 the default endpoint.
 
@@ -92,6 +93,40 @@ returns the answer directly and panics when the requested ID is missing.
 
 Additional runnable examples are available in the [examples](./examples)
 directory.
+
+## Images and Box questions
+
+Use `ImageFromFile` or `NewImage` to place an image in the state, instructions,
+or criteria. The client creates image references, uploads the files as
+`multipart/form-data`, and adds the required images header automatically. Image
+and Box support is experimental. Box questions require Jev 1.14 (`JevPreview`
+or `Jev114`).
+
+```go
+photo, err := typesafe.ImageFromFile("kitchen.jpg")
+if err != nil {
+	panic(err)
+}
+
+request := typesafe.NewEvaluationRequest(map[string]any{"photo": photo}).
+	Model(typesafe.JevPreview).
+	Box("mug", "the coffee mug in `photo`").
+	Noul("mug_visible", "Is there a coffee mug in `photo`?", nil).
+	Build()
+
+result, err := client.Evaluate(ctx, request)
+if err != nil {
+	panic(err)
+}
+edges := result.Answers.MustGet("mug").Box
+fmt.Println(edges.Left, edges.Top, edges.Right, edges.Bottom)
+```
+
+Image bytes may also be constructed directly with `typesafe.NewImage(data,
+"jpg")`. The `Answer.Box` field contains normalized `Top`, `Bottom`, `Left`,
+and `Right` edges. To place an image inside a longer instruction string, add it
+with a reference using `.Image("reference", photo)` and include that reference
+in the string; the client uploads the image for you.
 
 The client retries `429 Too Many Requests` and `529 Overloaded` responses with
 exponential backoff. Use `WithBaseURL`, `WithHTTPClient`, `WithMaxRetries`, and

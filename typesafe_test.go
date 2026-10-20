@@ -1,9 +1,14 @@
 package typesafe
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -83,5 +88,82 @@ func TestEvaluationRequestBuilder(t *testing.T) {
 		Build()
 	if req.Model != JevLatest || len(req.Questions) != 2 {
 		t.Fatalf("unexpected request: %#v", req)
+	}
+}
+
+func TestEvaluateImageUpload(t *testing.T) {
+	imageData := []byte("test image bytes")
+	if path := os.Getenv("TYPESAFE_TEST_IMAGE"); path != "" {
+		var err error
+		imageData, err = os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	image := NewImage(imageData, "jpg")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("TypeSafe-Danger-Zone-Images"); got != "true" {
+			t.Errorf("image header = %q", got)
+		}
+		if got := r.Header.Get("Content-Type"); !strings.HasPrefix(got, "multipart/form-data;") {
+			t.Errorf("content type = %q", got)
+		}
+		reader, err := r.MultipartReader()
+		if err != nil {
+			t.Errorf("multipart reader: %v", err)
+			return
+		}
+		requestPart, err := reader.NextPart()
+		if err != nil {
+			t.Errorf("request part: %v", err)
+			return
+		}
+		if requestPart.FormName() != "request" {
+			t.Errorf("first part name = %q, want request", requestPart.FormName())
+		}
+		var body struct {
+			State  map[string]string `json:"state"`
+			Assets map[string]Asset `json:"assets"`
+		}
+		if err := json.NewDecoder(requestPart).Decode(&body); err != nil {
+			t.Errorf("decode request part: %v", err)
+			return
+		}
+		ref := body.State["photo"]
+		asset, ok := body.Assets[ref]
+		if !ok || asset.Type != "image" || asset.Format != "jpg" {
+			t.Errorf("image asset = %#v, found=%v", asset, ok)
+		}
+		imagePart, err := reader.NextPart()
+		if err != nil {
+			t.Errorf("image part: %v", err)
+			return
+		}
+		if imagePart.FormName() != asset.Part {
+			t.Errorf("image part name = %q, asset part = %q", imagePart.FormName(), asset.Part)
+		}
+		got, err := io.ReadAll(imagePart)
+		if err != nil {
+			t.Errorf("read image part: %v", err)
+		} else if !bytes.Equal(got, imageData) {
+			t.Errorf("uploaded image bytes do not match")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"model":"jev-1.14.0","answers":{"mug":{"type":"box","box":{"top":0.25,"bottom":0.82,"left":0.44,"right":0.84},"confidence":0.92}},"usage":{"input_tokens":290,"output_tokens":21}}`)
+	}))
+	defer server.Close()
+
+	client := NewClient("secret", WithBaseURL(server.URL), WithMaxRetries(0))
+	request := NewEvaluationRequest(map[string]any{"photo": image}).
+		Model(JevPreview).
+		Box("mug", "the coffee mug in `photo`").
+		Build()
+	result, err := client.Evaluate(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	box := result.Answers.MustGet("mug").Box
+	if box == nil || box.Top != 0.25 || box.Right != 0.84 {
+		t.Fatalf("unexpected box answer: %#v", box)
 	}
 }
