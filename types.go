@@ -1,15 +1,29 @@
 package typesafe
 
 const DefaultBaseURL = "https://api.typesafe.ai"
-const JevLatest = "jev-latest"
+
+type Model string
+
+const JevLatest Model = "jev-latest"
+const JevPreview Model = "jev-preview"
+const Jev114 Model = "jev-1.14.0"
 const DefaultModel = JevLatest
 
 type Question = any
 
 type EvaluationRequest struct {
 	State     any                 `json:"state"`
-	Model     string              `json:"model"`
+	Model     Model               `json:"model"`
 	Questions map[string]Question `json:"questions"`
+	Assets    map[string]Asset    `json:"assets,omitempty"`
+}
+
+type Asset struct {
+	Type       string `json:"type,omitempty"`
+	Part       string `json:"part,omitempty"`
+	DataBase64 string `json:"data_base64,omitempty"`
+	Format     string `json:"format,omitempty"`
+	Data       []byte `json:"-"`
 }
 
 type NoulQuestion struct {
@@ -35,6 +49,11 @@ type ScoreQuestion struct {
 	Criteria     []any  `json:"criteria"`
 }
 
+type BoxQuestion struct {
+	Type         string `json:"type"`
+	Instructions any    `json:"instructions"`
+}
+
 func Noul(instructions any, criteria any) NoulQuestion {
 	return NoulQuestion{Type: "noul", Instructions: instructions, Criteria: criteria}
 }
@@ -47,10 +66,15 @@ func Score(instructions any, criteria []any) ScoreQuestion {
 	return ScoreQuestion{Type: "score", Instructions: instructions, Criteria: criteria}
 }
 
+func Box(instructions any) BoxQuestion {
+	return BoxQuestion{Type: "box", Instructions: instructions}
+}
+
 type EvaluationRequestBuilder struct {
 	state     any
-	model     string
+	model     Model
 	questions map[string]Question
+	assets    map[string]Asset
 }
 
 func NewEvaluationRequest(state any) *EvaluationRequestBuilder {
@@ -61,10 +85,18 @@ func NewEvaluationRequest(state any) *EvaluationRequestBuilder {
 	}
 }
 
-func (b *EvaluationRequestBuilder) Model(model string) *EvaluationRequestBuilder {
+func (b *EvaluationRequestBuilder) Model(model Model) *EvaluationRequestBuilder {
 	if model != "" {
 		b.model = model
 	}
+	return b
+}
+
+func (b *EvaluationRequestBuilder) Image(reference string, image Image) *EvaluationRequestBuilder {
+	if b.assets == nil {
+		b.assets = make(map[string]Asset)
+	}
+	b.assets[reference] = Asset{Type: "image", Format: image.format, Data: append([]byte(nil), image.data...)}
 	return b
 }
 
@@ -85,12 +117,16 @@ func (b *EvaluationRequestBuilder) Score(id string, instructions any, criteria [
 	return b.Question(id, Score(instructions, criteria))
 }
 
+func (b *EvaluationRequestBuilder) Box(id string, instructions any) *EvaluationRequestBuilder {
+	return b.Question(id, Box(instructions))
+}
+
 func (b *EvaluationRequestBuilder) Build() EvaluationRequest {
-	return EvaluationRequest{State: b.state, Model: b.model, Questions: b.questions}
+	return EvaluationRequest{State: b.state, Model: b.model, Questions: b.questions, Assets: b.assets}
 }
 
 type EvaluationResponse struct {
-	Model   string  `json:"model"`
+	Model   Model   `json:"model"`
 	Answers Answers `json:"answers"`
 	Usage   Usage   `json:"usage"`
 }
@@ -123,4 +159,12 @@ type Answer struct {
 	Legend        map[string]string  `json:"legend,omitempty"`
 	Probabilities map[string]float64 `json:"probabilities,omitempty"`
 	Confidence    float64            `json:"confidence,omitempty"`
+	Box           *BoundingBox       `json:"box,omitempty"`
+}
+
+type BoundingBox struct {
+	Top    float64 `json:"top"`
+	Bottom float64 `json:"bottom"`
+	Left   float64 `json:"left"`
+	Right  float64 `json:"right"`
 }
